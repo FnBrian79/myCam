@@ -10,7 +10,7 @@ from recorder import capture_screenshot, capture_sequence
 from recorder_adb import record_adb_stream, check_adb_connected, resolve_adb_cmd, get_adb_prefix, ensure_device_ready, CREATE_NO_WINDOW
 from storage import log_event, load_events
 from dashboard import DASHBOARD_HTML
-from telegram_feed import send_telegram_alert, handle_telegram_callback
+from telegram_feed import send_telegram_alert, handle_telegram_callback, start_telegram_polling
 
 SEEN_NOTIFICATIONS = set()
 
@@ -206,6 +206,9 @@ def check_adb_notifications(config):
 
 def run_listener_daemon(config):
     print("[myCam Daemon] Initializing continuous sovereign sentinel...")
+    
+    # Launch Telegram interactive polling (Approve / Deny)
+    start_telegram_polling(config)
     
     t = Thread(target=start_webhook_server, args=(config,), daemon=True)
     t.start()

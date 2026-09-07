@@ -1,7 +1,9 @@
 import json
 import os
+import time
 import urllib.request
 import urllib.parse
+from threading import Thread
 from storage import update_training_label
 
 def get_telegram_config(config):
@@ -13,34 +15,37 @@ def get_telegram_config(config):
 
 def send_telegram_alert(config, event_id, title, media_path=None, details=""):
     """
-    Asynchronously delivers a rich media alert with inline training buttons to Telegram.
-    Allows user to classify events (Person, Vehicle, Animal, False Alarm) directly from chat/smartwatch.
+    Asynchronously delivers a rich media alert to Telegram with Approve / Deny and classification buttons.
+    Operates 100% locally from the background daemon.
     """
     enabled, token, chat_id, tg_opts = get_telegram_config(config)
     if not enabled or not token or not chat_id:
         return False
 
-    training_mode = tg_opts.get("training_mode", True)
-    
-    caption = f"📹 <b>myCam Sentinel</b>\n\n<b>Alert:</b> {title}\n<b>Event ID:</b> <code>{event_id}</code>\n"
+    caption = (
+        f"🛡️ <b>myCam Sovereign Sentinel</b>\n\n"
+        f"<b>Alert:</b> {title}\n"
+        f"<b>Event ID:</b> <code>{event_id}</code>\n"
+    )
     if details:
         caption += f"<b>Details:</b> {details}\n"
 
-    reply_markup = None
-    if training_mode:
-        caption += "\n🎯 <i>Tap to classify for AI training:</i>"
-        reply_markup = {
-            "inline_keyboard": [
-                [
-                    {"text": "👤 Person", "callback_data": f"lbl:{event_id}:person"},
-                    {"text": "🚗 Vehicle", "callback_data": f"lbl:{event_id}:vehicle"}
-                ],
-                [
-                    {"text": "🐾 Animal", "callback_data": f"lbl:{event_id}:animal"},
-                    {"text": "🍃 False Alarm", "callback_data": f"lbl:{event_id}:false_alarm"}
-                ]
+    caption += "\n👇 <b>Verify visitor / target:</b>"
+    
+    # 2-Row Interactive Keyboard: Action (Approve/Deny) + Category (Person/Animal)
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Approve (Known / OK)", "callback_data": f"act:{event_id}:approve"},
+                {"text": "❌ Deny (Intruder / Alert)", "callback_data": f"act:{event_id}:deny"}
+            ],
+            [
+                {"text": "👤 Person", "callback_data": f"lbl:{event_id}:person"},
+                {"text": "🐾 Animal", "callback_data": f"lbl:{event_id}:animal"},
+                {"text": "🍃 False Alarm", "callback_data": f"lbl:{event_id}:false_alarm"}
             ]
-        }
+        ]
+    }
 
     try:
         if media_path and os.path.exists(media_path):
@@ -64,9 +69,8 @@ def send_telegram_alert(config, event_id, title, media_path=None, details=""):
             body.extend(f'Content-Disposition: form-data; name="caption"\r\n\r\n{caption}\r\n'.encode('utf-8'))
             
             # Form field: reply_markup
-            if reply_markup:
-                body.extend(f"--{boundary}\r\n".encode('utf-8'))
-                body.extend(f'Content-Disposition: form-data; name="reply_markup"\r\n\r\n{json.dumps(reply_markup)}\r\n'.encode('utf-8'))
+            body.extend(f"--{boundary}\r\n".encode('utf-8'))
+            body.extend(f'Content-Disposition: form-data; name="reply_markup"\r\n\r\n{json.dumps(reply_markup)}\r\n'.encode('utf-8'))
             
             # File data
             filename = os.path.basename(media_path)
@@ -93,10 +97,9 @@ def send_telegram_alert(config, event_id, title, media_path=None, details=""):
             payload = {
                 "chat_id": chat_id,
                 "text": caption,
-                "parse_mode": "HTML"
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
             }
-            if reply_markup:
-                payload["reply_markup"] = reply_markup
             data_bytes = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(
                 f"https://api.telegram.org/bot{token}/sendMessage",
@@ -110,16 +113,69 @@ def send_telegram_alert(config, event_id, title, media_path=None, details=""):
         return False
 
 def handle_telegram_callback(callback_data, config=None):
-    """Parses incoming callback queries from inline buttons and records training labels."""
-    # Format: lbl:<event_id>:<label>
+    """Parses incoming callback queries from inline buttons and records user decisions."""
     try:
         parts = callback_data.split(":")
-        if len(parts) >= 3 and parts[0] == "lbl":
+        if len(parts) >= 3:
+            action_type = parts[0]
             event_id = parts[1]
-            label = parts[2]
-            update_training_label(event_id, label, config)
-            print(f"[myCam Training Ground Truth] Labeled {event_id} as '{label}'")
-            return True, f"Logged as {label}"
+            action = parts[2]
+            
+            if action_type == "act":
+                if action == "approve":
+                    update_training_label(event_id, "APPROVED_KNOWN", config)
+                    print(f"[myCam Triage] Event {event_id} APPROVED by user.")
+                    return True, "✅ Approved (Saved to Warm Pool)"
+                elif action == "deny":
+                    update_training_label(event_id, "DENIED_INTRUDER", config)
+                    print(f"[myCam Triage] Event {event_id} DENIED by user. Flagged as perimeter alert!")
+                    return True, "🚨 Denied (Perimeter Alert Flagged)"
+                    
+            elif action_type == "lbl":
+                update_training_label(event_id, action, config)
+                print(f"[myCam Training Ground Truth] Labeled {event_id} as '{action}'")
+                return True, f"Logged as {action}"
     except Exception as e:
         print(f"[myCam Telegram Callback Error] {e}")
-    return False, "Error"
+    return False, "Error processing decision"
+
+def start_telegram_polling(config):
+    """
+    Background long-polling loop for Telegram button callbacks.
+    100% outbound HTTPS polling — zero incoming ports, zero public webhooks needed.
+    """
+    enabled, token, _, _ = get_telegram_config(config)
+    if not enabled or not token:
+        return
+
+    def _poll():
+        print("[myCam Telegram] Long-polling thread active for interactive Approve/Deny buttons...")
+        offset = 0
+        while True:
+            try:
+                url = f"https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=20"
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    for update in data.get("result", []):
+                        offset = update["update_id"] + 1
+                        if "callback_query" in update:
+                            cb = update["callback_query"]
+                            cb_id = cb["id"]
+                            cb_data = cb.get("data", "")
+                            
+                            success, feedback = handle_telegram_callback(cb_data, config)
+                            
+                            # Acknowledge button click so Telegram stops spinner
+                            try:
+                                ans_url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+                                ans_payload = json.dumps({"callback_query_id": cb_id, "text": feedback}).encode("utf-8")
+                                ans_req = urllib.request.Request(ans_url, data=ans_payload, headers={"Content-Type": "application/json"})
+                                urllib.request.urlopen(ans_req, timeout=5)
+                            except Exception:
+                                pass
+            except Exception:
+                time.sleep(5)
+
+    t = Thread(target=_poll, daemon=True)
+    t.start()
