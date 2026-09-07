@@ -96,6 +96,22 @@ def init_sqlite_ledger(config=None):
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_events(timestamp);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_hot_status ON hot_pool(status);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_label ON telemetry_events(training_label);")
+
+            # 5. Known identities & visual reference library
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS known_identities (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                source TEXT,
+                file_hash TEXT UNIQUE,
+                local_path TEXT,
+                metadata_json TEXT,
+                vector_768 TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_hash ON known_identities(file_hash);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_name ON known_identities(name);")
             
             conn.commit()
             conn.close()
@@ -250,3 +266,70 @@ def cleanup_old_media(config):
             updated_events.append(evt)
             
     save_events(updated_events)
+
+def insert_known_identity(identity_id, name, source, file_hash, local_path, metadata_dict, vector_list=None, config=None):
+    """Stores a known identity and enrolls into both known_identities and Warm Pool."""
+    init_sqlite_ledger(config)
+    meta_str = json.dumps(metadata_dict) if isinstance(metadata_dict, dict) else str(metadata_dict)
+    vec_str = json.dumps(vector_list) if vector_list else None
+    
+    for db_path in get_db_paths(config):
+        try:
+            conn = sqlite3.connect(db_path, timeout=10)
+            cursor = conn.cursor()
+            
+            # 1. Insert into known_identities
+            cursor.execute("""
+            INSERT OR REPLACE INTO known_identities (id, name, source, file_hash, local_path, metadata_json, vector_768)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+            """, (identity_id, name, source, file_hash, local_path, meta_str, vec_str))
+            
+            # 2. Also register into Warm Pool for training / triage context
+            cursor.execute("""
+            INSERT INTO warm_pool (node_id, timestamp, context_summary, metadata)
+            VALUES (?, ?, ?, ?);
+            """, (
+                f"identity:{name}",
+                datetime.now(timezone.utc).isoformat(),
+                f"Enrolled Identity: {name} (source: {source}, hash: {file_hash[:12]}...)",
+                json.dumps({
+                    "identity_id": identity_id,
+                    "name": name,
+                    "source": source,
+                    "file_hash": file_hash,
+                    "local_path": local_path,
+                    "has_vector": bool(vector_list)
+                })
+            ))
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[myCam SQLite Warning] Identity insert failed for {db_path}: {e}")
+
+def get_known_identities(config=None):
+    """Fetches all enrolled identities from the SQLite ledger."""
+    init_sqlite_ledger(config)
+    results = []
+    primary_db = get_db_paths(config)[0]
+    try:
+        conn = sqlite3.connect(primary_db, timeout=10)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, source, file_hash, local_path, metadata_json, vector_768, created_at FROM known_identities ORDER BY created_at DESC;")
+        rows = cursor.fetchall()
+        for r in rows:
+            results.append({
+                "id": r["id"],
+                "name": r["name"],
+                "source": r["source"],
+                "file_hash": r["file_hash"],
+                "local_path": r["local_path"],
+                "metadata": json.loads(r["metadata_json"]) if r["metadata_json"] else {},
+                "has_vector": bool(r["vector_768"]),
+                "created_at": r["created_at"]
+            })
+        conn.close()
+    except Exception as e:
+        print(f"[myCam SQLite Warning] get_known_identities failed: {e}")
+    return results

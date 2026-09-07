@@ -8,9 +8,10 @@ from threading import Thread
 
 from recorder import capture_screenshot, capture_sequence
 from recorder_adb import record_adb_stream, check_adb_connected, resolve_adb_cmd, get_adb_prefix, ensure_device_ready, CREATE_NO_WINDOW
-from storage import log_event, load_events
+from storage import log_event, load_events, get_known_identities
 from dashboard import DASHBOARD_HTML
 from telegram_feed import send_telegram_alert, handle_telegram_callback, start_telegram_polling
+from photos_ingest import run_photo_ingest_pipeline, get_designated_photo_sources
 
 SEEN_NOTIFICATIONS = set()
 
@@ -103,6 +104,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.end_headers()
+        elif self.path == '/api/ingest_photos':
+            Thread(target=run_photo_ingest_pipeline, args=(self.config,)).start()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ingest_started"}).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
@@ -126,6 +133,20 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(events).encode('utf-8'))
+
+        elif parsed_url.path == '/api/identities':
+            identities = get_known_identities(self.config)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(identities).encode('utf-8'))
+
+        elif parsed_url.path == '/api/sources':
+            sources = get_designated_photo_sources(self.config)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"sources": sources}).encode('utf-8'))
             
         elif parsed_url.path == '/api/media':
             query = urllib.parse.parse_qs(parsed_url.query)
@@ -136,8 +157,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     file_path = os.path.normpath(os.path.join(base_dir, file_path))
                 if os.path.exists(file_path):
                     self.send_response(200)
-                    if file_path.lower().endswith('.png') or file_path.lower().endswith('.jpg'):
-                        self.send_header('Content-Type', 'image/png')
+                    if file_path.lower().endswith('.png') or file_path.lower().endswith('.jpg') or file_path.lower().endswith('.jpeg'):
+                        self.send_header('Content-Type', 'image/jpeg')
                     elif file_path.lower().endswith('.mp4'):
                         self.send_header('Content-Type', 'video/mp4')
                     else:
