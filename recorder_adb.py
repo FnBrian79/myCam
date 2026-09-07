@@ -45,10 +45,10 @@ def check_adb_connected(config=None):
     try:
         res = subprocess.run(
             prefix + ["get-state"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True, timeout=3,
             creationflags=CREATE_NO_WINDOW
         )
-        if res.returncode == 0 and "device" in res.stdout:
+        if res.returncode == 0 and b"device" in res.stdout:
             return True
     except Exception:
         pass
@@ -130,7 +130,7 @@ def record_adb_stream(config, duration_sec=15, title="Ring Doorbell Motion"):
         # 3. Pull video file to sovereign storage
         pull_res = subprocess.run(
             prefix + ["pull", remote_path, local_path],
-            capture_output=True, text=True, timeout=10, creationflags=CREATE_NO_WINDOW
+            capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW
         )
 
         if pull_res.returncode == 0 and os.path.exists(local_path):
@@ -139,7 +139,8 @@ def record_adb_stream(config, duration_sec=15, title="Ring Doorbell Motion"):
             print(f"[myCam ADB] SUCCESS: Sovereign recording saved -> {local_path}")
             return local_path
         else:
-            print(f"[myCam ADB Error] Pull failed: {pull_res.stderr.strip()}")
+            err_msg = pull_res.stderr.decode("utf-8", errors="replace").strip()
+            print(f"[myCam ADB Error] Pull failed: {err_msg}")
     except Exception as e:
         print(f"[myCam ADB Exception] Stream record error: {e}")
 

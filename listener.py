@@ -170,11 +170,12 @@ def check_adb_notifications(config):
         prefix = get_adb_prefix(config)
         res = subprocess.run(
             prefix + ["shell", "dumpsys", "notification", "--noredact"],
-            capture_output=True, text=True, timeout=4, creationflags=CREATE_NO_WINDOW
+            capture_output=True, timeout=4, creationflags=CREATE_NO_WINDOW
         )
         if res.returncode == 0:
+            stdout_text = res.stdout.decode("utf-8", errors="replace")
             current_active_keys = set()
-            for line in res.stdout.splitlines():
+            for line in stdout_text.splitlines():
                 line_clean = line.strip()
                 if "NotificationRecord(" in line_clean:
                     lower_line = line_clean.lower()
