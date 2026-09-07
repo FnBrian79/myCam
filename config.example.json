@@ -16,6 +16,7 @@
     "garage"
   ],
   "retention_days": 30,
+  "bind_host": "127.0.0.1",
   "webhook_port": 8765,
   "adb_enabled": true,
   "adb_target_device": "",
@@ -26,6 +27,8 @@
     "Driveway Floodlight",
     "Backyard Cam"
   ],
+  "encryption_enabled": false,
+  "encryption_key": "",
   "telegram": {
     "enabled": false,
     "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",

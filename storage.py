@@ -1,7 +1,8 @@
 import os
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
+from vault_crypto import encrypt_payload, decrypt_payload, compute_sha256
 
 EVENTS_FILE = "events.json"
 
@@ -16,24 +17,68 @@ def get_storage_dir(config=None):
     return storage_dir
 
 def get_db_paths(config=None):
+    """Resolves SQLite storage paths, including the 3-Tier Hot/Warm/Cold pools."""
     paths = []
     base_dir = os.path.dirname(os.path.abspath(__file__))
     primary_db = os.environ.get("MYCAM_DB_PATH", os.path.join(base_dir, "mycam.db"))
     paths.append(primary_db)
 
-    # Optional external mesh or spoke database path
+    # Optional 3-Tier Mesh Hot Pool paths
+    hot_pool_env = os.environ.get("HOT_POOL_PATH")
+    if hot_pool_env:
+        paths.append(hot_pool_env)
+
     external_db = os.environ.get("MYCAM_EXTERNAL_LEDGER_PATH")
     if external_db and os.path.exists(os.path.dirname(external_db)):
         paths.append(external_db)
         
-    return paths
+    return list(dict.fromkeys(paths))
 
 def init_sqlite_ledger(config=None):
+    """Initializes high-speed WAL mode and the Tri-Stage schema (Hot Pool, Warm Pool, Cold Storage)."""
     for db_path in get_db_paths(config):
         try:
             os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, timeout=10)
             cursor = conn.cursor()
+            
+            # High-speed concurrency
+            cursor.execute("PRAGMA journal_mode=WAL;")
+            cursor.execute("PRAGMA synchronous=NORMAL;")
+
+            # 1. HOT POOL: Ephemeral, high-frequency raw telemetry
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hot_pool (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                source TEXT,
+                payload TEXT, -- JSON blob (encrypted if encryption_enabled)
+                status TEXT DEFAULT 'PENDING' -- PENDING, GOLD, GRUB
+            );
+            """)
+
+            # 2. WARM POOL: Triaged & training context
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS warm_pool (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_id TEXT,
+                timestamp TEXT,
+                context_summary TEXT,
+                metadata TEXT
+            );
+            """)
+
+            # 3. COLD STORAGE: Immutable sealed lineage snapshots
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS cold_storage (
+                hash TEXT PRIMARY KEY,
+                node_id TEXT NOT NULL,
+                sealed_at TEXT NOT NULL,
+                full_state TEXT NOT NULL
+            );
+            """)
+
+            # 4. Standard telemetry events table for backward-compatible dashboard queries
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS telemetry_events (
                 id TEXT PRIMARY KEY,
@@ -47,10 +92,11 @@ def init_sqlite_ledger(config=None):
                 git_commit_sha TEXT
             );
             """)
+            
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry_events(timestamp);")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_source ON telemetry_events(source);")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_event_type ON telemetry_events(event_type);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_hot_status ON hot_pool(status);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_label ON telemetry_events(training_label);")
+            
             conn.commit()
             conn.close()
         except Exception as e:
@@ -58,42 +104,88 @@ def init_sqlite_ledger(config=None):
 
 def write_to_sqlite(event_id, source, event_type, payload, frame_path=None, git_sha=None, config=None):
     init_sqlite_ledger(config)
+    node_name = os.environ.get("COMPUTERNAME", os.environ.get("HOSTNAME", "local-sentinel"))
+    raw_payload_str = json.dumps(payload)
+    vault_payload_str = encrypt_payload(raw_payload_str, config)
+
     for db_path in get_db_paths(config):
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, timeout=10)
             cursor = conn.cursor()
+            
+            # Write to Tier 1: Hot Pool
+            cursor.execute("""
+            INSERT INTO hot_pool (timestamp, source, payload, status)
+            VALUES (?, ?, ?, 'PENDING');
+            """, (datetime.now(timezone.utc).isoformat(), source, vault_payload_str))
+
+            # Write to Telemetry Events (for Dashboard & Ledger)
             cursor.execute("""
             INSERT OR REPLACE INTO telemetry_events (id, timestamp, source, event_type, payload_json, frame_path, git_commit_sha)
             VALUES (?, ?, ?, ?, ?, ?, ?);
-            """, (event_id, datetime.now().isoformat(), source, event_type, json.dumps(payload), frame_path, git_sha))
+            """, (event_id, datetime.now().isoformat(), source, event_type, vault_payload_str, frame_path, git_sha))
+            
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"[myCam SQLite Warning] Insert failed for {db_path}: {e}")
+            print(f"[myCam SQLite Warning] Hot pool insert failed for {db_path}: {e}")
 
 def update_training_label(event_id, label, config=None):
+    """Promotes event from Hot Pool into Warm Pool triage and Cold sealed storage."""
     init_sqlite_ledger(config)
+    node_name = os.environ.get("COMPUTERNAME", os.environ.get("HOSTNAME", "local-sentinel"))
+    
     for db_path in get_db_paths(config):
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, timeout=10)
             cursor = conn.cursor()
+            
+            # 1. Update Telemetry Event
             cursor.execute("""
             UPDATE telemetry_events 
             SET training_label = ?, reviewed_at = ?
             WHERE id = ?;
             """, (label, datetime.now().isoformat(), event_id))
+
+            # 2. Promote to Tier 2: Warm Pool
+            summary = f"Motion Event {event_id} verified as: {label}"
+            cursor.execute("""
+            INSERT INTO warm_pool (node_id, timestamp, context_summary, metadata)
+            VALUES (?, ?, ?, ?);
+            """, (node_name, datetime.now(timezone.utc).isoformat(), summary, json.dumps({"label": label, "event_id": event_id})))
+
+            # 3. Seal into Tier 3: Cold Storage (Immutable Snapshot with SHA-256)
+            full_state = json.dumps({
+                "event_id": event_id,
+                "label": label,
+                "node_id": node_name,
+                "reviewed_at": datetime.now(timezone.utc).isoformat()
+            })
+            state_hash = compute_sha256(full_state)
+            encrypted_state = encrypt_payload(full_state, config)
+            
+            cursor.execute("""
+            INSERT OR IGNORE INTO cold_storage (hash, node_id, sealed_at, full_state)
+            VALUES (?, ?, ?, ?);
+            """, (state_hash, node_name, datetime.now(timezone.utc).isoformat(), encrypted_state))
+
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"[myCam SQLite Warning] Update label failed for {db_path}: {e}")
+            print(f"[myCam SQLite Warning] Pool transition failed for {db_path}: {e}")
 
-def load_events():
+def load_events(config=None):
     base_dir = os.path.dirname(os.path.abspath(__file__))
     evt_path = os.path.join(base_dir, EVENTS_FILE)
     if os.path.exists(evt_path):
         try:
             with open(evt_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                events = json.load(f)
+                # Decrypt details if encrypted
+                for e in events:
+                    if e.get("details") and isinstance(e["details"], str) and e["details"].startswith("enc:"):
+                        e["details"] = decrypt_payload(e["details"], config)
+                return events
         except Exception:
             return []
     return []
@@ -105,7 +197,7 @@ def save_events(events):
         json.dump(events, f, indent=2)
 
 def log_event(config, trigger_type, notification_title, media_files, details=""):
-    events = load_events()
+    events = load_events(config)
     event_id = f"evt_{int(datetime.now().timestamp())}"
     primary_media = media_files[0] if media_files else None
     
@@ -120,9 +212,7 @@ def log_event(config, trigger_type, notification_title, media_files, details="")
     events.insert(0, event_entry)
     save_events(events)
     
-    # Node detection from environment
     node_name = os.environ.get("COMPUTERNAME", os.environ.get("HOSTNAME", "local-sentinel"))
-    
     payload = {
         "title": notification_title,
         "details": details,
@@ -130,6 +220,7 @@ def log_event(config, trigger_type, notification_title, media_files, details="")
         "node": node_name,
         "mode": trigger_type
     }
+    
     write_to_sqlite(
         event_id=event_id,
         source="myCam_Sentinel",
@@ -143,7 +234,7 @@ def log_event(config, trigger_type, notification_title, media_files, details="")
 def cleanup_old_media(config):
     retention_days = config.get("retention_days", 30)
     cutoff = datetime.now() - timedelta(days=retention_days)
-    events = load_events()
+    events = load_events(config)
     updated_events = []
     
     for evt in events:

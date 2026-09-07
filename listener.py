@@ -154,10 +154,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
 def start_webhook_server(config):
+    bind_host = config.get("bind_host", "127.0.0.1")
     port = config.get("webhook_port", 8765)
     WebhookHandler.config = config
-    server = HTTPServer(('0.0.0.0', port), WebhookHandler)
-    print(f"[myCam] Sentinel Server live on http://0.0.0.0:{port}/dashboard")
+    server = HTTPServer((bind_host, port), WebhookHandler)
+    is_loopback = bind_host in ("127.0.0.1", "localhost")
+    print(f"[myCam] Sentinel Server live on http://{bind_host}:{port}/dashboard (Local Loopback Only: {is_loopback})")
     server.serve_forever()
 
 def check_adb_notifications(config):

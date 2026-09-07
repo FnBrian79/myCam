@@ -25,7 +25,11 @@ Instead of fighting the ecosystem, we **"Render unto Caesar that which is Caesar
 
 ## ⚡ Key Capabilities
 
-* 🛡️ **Zero Phone Interruption**: Dedicated edge hardware means recording never steals focus from your personal smartphone.
+* 🛡️ **Zero Exposed Endpoints**: Completely inward-facing. Binds strictly to local loopback (`127.0.0.1:8765`) by default—zero open ports to your LAN or the public internet. Push notifications are read locally over physical USB/ADB.
+* 🔒 **Three-Tier SQLite Storage & Encryption at Rest**:
+  * **Hot Pool (`hot_pool`)**: High-speed WAL mode for sub-millisecond raw event ingestion.
+  * **Warm Pool (`warm_pool`)**: Triaged events and human/Telegram dataset annotations.
+  * **Cold Storage (`cold_storage`)**: Immutable, SHA-256 sealed snapshots with optional AES encryption at rest.
 * 🔄 **Reboot & OEM Update Resilience**: Amazon or Android pushed an automatic OS update and rebooted? `myCam`'s watchdog detects the reconnect, automatically wakes the display (`KEYEVENT_POWER`), clears the keyguard (`KEYEVENT_MENU`), and primes the Ring app back into foreground RAM.
 * 🐳 **Containerized Deployment**: Ready to run via Docker or Docker Compose with ADB, FFmpeg, and Python pre-configured.
 * 🤖 **Asynchronous Telegram Training Feed**: Sends captured video clips directly to your private Telegram chat or smartwatch with 1-tap classification buttons (`[ 👤 Person ]`, `[ 🚗 Vehicle ]`, `[ 🐾 Animal ]`, `[ 🍃 False Alarm ]`) to curate ground-truth datasets for local computer vision models.
