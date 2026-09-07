@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  mycam:
+    build: .
+    container_name: mycam-sentinel
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./captures:/app/captures
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MYCAM_DB_PATH=/app/data/mycam.db
+    # To connect to a local ADB server or network ADB device:
+    network_mode: host

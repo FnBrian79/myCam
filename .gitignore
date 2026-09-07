@@ -1,0 +1,40 @@
+# Environment & Configuration Secrets
+config.json
+.env
+.env.*
+!.env.example
+
+# Media & Storage (Never commit captures)
+captures/
+*.mp4
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Database Ledgers & Events
+*.db
+*.sqlite
+*.sqlite3
+events.json
+scrapbook.db
+mycam.db
+
+# Logs & Daemons
+*.log
+mycam_daemon.log
+mycam_daemon_err.log
+
+# Python Cache & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,36 @@
+{
+  "storage_dir": "captures",
+  "default_capture_mode": "hybrid",
+  "record_duration_seconds": 15,
+  "fps": 10,
+  "target_keywords": [
+    "ring",
+    "motion",
+    "person",
+    "camera",
+    "doorbell",
+    "alert",
+    "detected",
+    "floodlight",
+    "backyard",
+    "garage"
+  ],
+  "retention_days": 30,
+  "webhook_port": 8765,
+  "adb_enabled": true,
+  "adb_target_device": "",
+  "ring_package_name": "com.ringapp",
+  "adb_record_duration": 15,
+  "camera_names": [
+    "Front Doorbell",
+    "Driveway Floodlight",
+    "Backyard Cam"
+  ],
+  "telegram": {
+    "enabled": false,
+    "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chat_id": "YOUR_TELEGRAM_CHAT_ID",
+    "training_mode": true
+  },
+  "ntfy_topic": "mycam-sentinel-alerts"
+}
