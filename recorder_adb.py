@@ -33,11 +33,52 @@ def resolve_adb_cmd(config=None):
 
     return "adb"
 
+KINDLE_SERIAL = "G0W19E04042401KF"
+KINDLE_WIFI_IP = "192.168.0.13:5555"
+
+def resolve_target_device(adb_cmd, config=None):
+    """
+    Intelligently targets the Kindle Fire HD 8+ (preferring wireless Wi-Fi ADB, falling back to USB).
+    Strictly protects and isolates against targeting the user's Pixel phone.
+    """
+    if config and config.get("adb_target_device"):
+        return config["adb_target_device"].strip()
+        
+    try:
+        res = subprocess.run([adb_cmd, "devices"], capture_output=True, timeout=3, creationflags=CREATE_NO_WINDOW)
+        output = res.stdout.decode("utf-8", errors="ignore")
+        
+        # 1. Prefer Wireless ADB on local Wi-Fi
+        if KINDLE_WIFI_IP in output:
+            return KINDLE_WIFI_IP
+            
+        # 2. Check USB Kindle
+        if KINDLE_SERIAL in output:
+            return KINDLE_SERIAL
+            
+        # 3. Attempt auto-reconnect over Wi-Fi if dropped
+        subprocess.run([adb_cmd, "connect", KINDLE_WIFI_IP], capture_output=True, timeout=2, creationflags=CREATE_NO_WINDOW)
+        return KINDLE_WIFI_IP
+    except Exception:
+        return KINDLE_WIFI_IP
+
+def enable_wireless_adb(config=None, target_ip="192.168.0.13", port=5555):
+    """Switches Kindle Fire into TCP/IP mode and connects wirelessly."""
+    adb_cmd = resolve_adb_cmd(config)
+    try:
+        subprocess.run([adb_cmd, "-s", KINDLE_SERIAL, "tcpip", str(port)], capture_output=True, timeout=4, creationflags=CREATE_NO_WINDOW)
+        time.sleep(1)
+        res = subprocess.run([adb_cmd, "connect", f"{target_ip}:{port}"], capture_output=True, timeout=4, creationflags=CREATE_NO_WINDOW)
+        return f"{target_ip}:{port}" in res.stdout.decode("utf-8", errors="ignore")
+    except Exception as e:
+        print(f"[myCam Wireless ADB Warning] {e}")
+        return False
+
 def get_adb_prefix(config=None):
     adb_cmd = resolve_adb_cmd(config)
-    target = config.get("adb_target_device") if config else None
-    if target and target.strip():
-        return [adb_cmd, "-s", target.strip()]
+    target = resolve_target_device(adb_cmd, config)
+    if target:
+        return [adb_cmd, "-s", target]
     return [adb_cmd]
 
 def check_adb_connected(config=None):

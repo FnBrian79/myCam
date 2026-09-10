@@ -12,16 +12,25 @@ from storage import log_event, load_events, get_known_identities
 from dashboard import DASHBOARD_HTML
 from telegram_feed import send_telegram_alert, handle_telegram_callback, start_telegram_polling
 from photos_ingest import run_photo_ingest_pipeline, get_designated_photo_sources
+from alexa_bridge import start_alexa_bridge, trigger_alexa_alert
+from cleon_gate import evaluate_cleon_trip
 
 SEEN_NOTIFICATIONS = set()
 
 def dispatch_phone_alert(title, details, config, media_path=None, event_id=""):
-    """Dispatches notifications via Telegram (for training/review) and ntfy push."""
+    """Dispatches notifications via Telegram (for training/review), Alexa house announcement, and ntfy push."""
     # 1. Telegram Asynchronous Training & Review Feed
     try:
         send_telegram_alert(config, event_id, title, media_path, details)
     except Exception as e:
         print(f"[myCam Alert Warning] Telegram dispatch error: {e}")
+
+    # 2. Local Alexa House-Wide Voice Announcement (Ghost in the Shell)
+    try:
+        if config.get("alexa_bridge_enabled", True):
+            trigger_alexa_alert(title)
+    except Exception as e:
+        pass
 
     # 2. ntfy push channel (optional)
     ntfy_topic = config.get("ntfy_topic")
@@ -230,6 +239,13 @@ def run_listener_daemon(config):
     
     # Launch Telegram interactive polling (Approve / Deny)
     start_telegram_polling(config)
+
+    # Launch local Alexa UPnP Infiltration Bridge (Ghost in the Shell)
+    if config.get("alexa_bridge_enabled", True):
+        try:
+            start_alexa_bridge()
+        except Exception as e:
+            print(f"[myCam] Alexa bridge startup notice: {e}")
     
     t = Thread(target=start_webhook_server, args=(config,), daemon=True)
     t.start()
@@ -265,7 +281,9 @@ def run_listener_daemon(config):
                         except Exception:
                             media_file = None
                             
-                    dispatch_phone_alert(title, "Live motion captured and vaulted to sovereign storage.", config, media_path=media_file, event_id=event_id)
+                    # Route through the Cleon Dynasty Triple Logic Gate
+                    gate_result = evaluate_cleon_trip(title, media_path=media_file, event_id=event_id, config=config)
+                    log_event(config, "cleon_gate_trip", title, [media_file] if media_file else [], details=f"Cleon Verdict: {gate_result.get('action_taken')}")
             time.sleep(3)
     except KeyboardInterrupt:
         print("[myCam Daemon] Daemon stopped gracefully.")
