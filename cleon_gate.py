@@ -130,8 +130,22 @@ class CleonDynastyGate:
                             "source": ident["source"],
                             "confidence": 0.99
                         }
+                    id_vec = ident.get("vector_768")
+                    if trip_vector and id_vec:
+                        score = cosine_similarity(trip_vector, id_vec)
+                        if score > highest_score:
+                            highest_score = score
+                            best_match = ident
         except Exception:
             pass
+
+        if best_match and highest_score >= 0.8:
+            return {
+                "classification": "FRIENDLY_VERIFIED",
+                "identity": best_match["name"],
+                "source": best_match["source"],
+                "confidence": round(highest_score, 2)
+            }
 
         # Check explicit keyword friendly tags
         for ident in identities:

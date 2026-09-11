@@ -18,6 +18,9 @@ def send_telegram_alert(config, event_id, title, media_path=None, details=""):
     Asynchronously delivers a rich media alert to Telegram with Approve / Deny and classification buttons.
     Operates 100% locally from the background daemon.
     """
+    if isinstance(media_path, list):
+        media_path = media_path[-1] if media_path else None
+
     enabled, token, chat_id, tg_opts = get_telegram_config(config)
     if not enabled or not token or not chat_id:
         return False
