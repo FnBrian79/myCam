@@ -3,6 +3,7 @@ config.json
 .env
 .env.*
 !.env.example
+.vault.key
 
 # Media & Storage (Never commit captures)
 captures/
