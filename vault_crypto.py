@@ -11,17 +11,19 @@ def get_or_create_key(config=None):
     3. Local .vault.key file (auto-generated if missing and encryption enabled)
     """
     env_key = os.environ.get("SOVEREIGN_ENCRYPTION_KEY")
-    if env_key:
+    if env_key and env_key.strip():
         return env_key.strip()
         
-    if config and config.get("encryption_key"):
-        return config["encryption_key"].strip()
+    if config and config.get("encryption_key") and str(config["encryption_key"]).strip():
+        return str(config["encryption_key"]).strip()
         
     key_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".vault.key")
     if os.path.exists(key_file):
         try:
             with open(key_file, "r", encoding="utf-8") as f:
-                return f.read().strip()
+                content = f.read().strip()
+                if content:
+                    return content
         except Exception:
             pass
 
@@ -42,7 +44,6 @@ def encrypt_payload(data_str: str, config=None) -> str:
     try:
         from cryptography.fernet import Fernet
         key = get_or_create_key(config)
-        # Ensure key is 32 url-safe base64 bytes
         fernet = Fernet(key.encode('utf-8'))
         encrypted_bytes = fernet.encrypt(data_str.encode('utf-8'))
         return "enc:" + encrypted_bytes.decode('utf-8')
@@ -52,7 +53,7 @@ def encrypt_payload(data_str: str, config=None) -> str:
 
 def decrypt_payload(enc_str: str, config=None) -> str:
     """Decrypts a previously encrypted payload string."""
-    if not enc_str or not enc_str.startswith("enc:"):
+    if not enc_str or not isinstance(enc_str, str) or not enc_str.startswith("enc:"):
         return enc_str
 
     try:
@@ -68,4 +69,6 @@ def decrypt_payload(enc_str: str, config=None) -> str:
 
 def compute_sha256(content: str) -> str:
     """Computes SHA-256 hash for immutable cold-pool sealing."""
+    if content is None:
+        content = ""
     return hashlib.sha256(content.encode('utf-8')).hexdigest()

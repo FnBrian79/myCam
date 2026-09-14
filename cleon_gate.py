@@ -9,7 +9,7 @@ The imperial triumvirate governing every physical perimeter trip:
 
   ☀️ BROTHER DAY   (Gate 2: Audit & Vector Match in Warm Pool)
      - The sun at its zenith. Audits the frame against enrolled Google Photos & family vectors.
-     - Computes cosine similarity against the 233+ enrolled identities.
+     - Computes cosine similarity against enrolled identities.
      - Classifies: FRIENDLY_VERIFIED (Family/User) vs UNRECOGNIZED_ANOMALY (Stranger).
 
   🌇 BROTHER DUSK  (Gate 3: Sovereign Seal & Action Execution)
@@ -22,6 +22,7 @@ The imperial triumvirate governing every physical perimeter trip:
 import json
 import time
 import sys
+import re
 from datetime import datetime, timezone
 import requests
 
@@ -96,51 +97,59 @@ class CleonDynastyGate:
     def _gate_1_dawn(self, trigger_title, media_path):
         """Dawn checks if the trigger contains genuine physical signal."""
         valid_signals = ["ring", "motion", "camera", "doorbell", "person", "floodlight", "alert"]
-        title_lower = trigger_title.lower()
-        has_signal = any(sig in title_lower for sig in valid_signals)
+        title_lower = (trigger_title or "").lower()
+        has_signal = any(re.search(r'\b' + sig + r'\b', title_lower) for sig in valid_signals)
         
         if not has_signal:
             return {"passed": False, "reason": "No recognized physical signal in trigger"}
         return {"passed": True, "reason": "Physical motion signature verified"}
 
     def _gate_2_day(self, trigger_title, media_path):
-        """Day audits the trip against the enrolled Warm Pool identities."""
+        """Day audits the trip against the enrolled Warm Pool identities and config overrides."""
+        trigger_lower = (trigger_title or "").lower()
         identities = get_known_identities(self.config)
         
         # Test semantic match of trigger context against enrolled identities
-        best_match = None
-        highest_score = 0.0
-        
         try:
             r = requests.post(
                 OLLAMA_EMBED_URL,
                 json={"model": EMBEDDING_MODEL, "prompt": trigger_title},
-                timeout=5
+                timeout=2
             )
             if r.status_code == 200:
                 trip_vector = r.json().get("embedding", [])
-                
                 for ident in identities:
-                    meta = ident.get("metadata", {})
-                    # If specific name or tag is mentioned in trigger (e.g. Mom)
-                    if ident["name"].lower() in trigger_title.lower():
+                    ident_name = ident.get("name", "")
+                    if ident_name and ident_name.lower() in trigger_lower:
                         return {
                             "classification": "FRIENDLY_VERIFIED",
-                            "identity": ident["name"],
-                            "source": ident["source"],
+                            "identity": ident_name,
+                            "source": ident.get("source", "warm_pool"),
                             "confidence": 0.99
                         }
         except Exception:
             pass
 
-        # Check explicit keyword friendly tags
+        # Check explicit keyword friendly tags from enrolled identities
         for ident in identities:
-            if ident["name"].lower() in trigger_title.lower():
+            ident_name = ident.get("name", "")
+            if ident_name and ident_name.lower() in trigger_lower:
                 return {
                     "classification": "FRIENDLY_VERIFIED",
-                    "identity": ident["name"],
-                    "source": ident["source"],
+                    "identity": ident_name,
+                    "source": ident.get("source", "warm_pool"),
                     "confidence": 0.95
+                }
+
+        # Check configured friendly names or keywords
+        friendly_names = self.config.get("friendly_names", []) + self.config.get("known_names", [])
+        for fname in friendly_names:
+            if fname and str(fname).lower() in trigger_lower:
+                return {
+                    "classification": "FRIENDLY_VERIFIED",
+                    "identity": str(fname),
+                    "source": "config_override",
+                    "confidence": 0.90
                 }
 
         # If not verified friendly, Day flags as unconfirmed
@@ -203,10 +212,10 @@ if __name__ == "__main__":
     
     # Test 1: Friendly user trip
     print("\n--- TEST 1: Friendly Identity Trip (Mom) ---")
-    res1 = evaluate_cleon_trip("Mom walking up to Front Door Camera")
+    res1 = evaluate_cleon_trip("Mom walking up to Front Door Camera", config={"friendly_names": ["Mom"]})
     print("Result:", json.dumps(res1, indent=2))
     
-    # Test 2: Unrecognized visitor trip
+    # Test 2: Unrecognized stranger Trip
     print("\n--- TEST 2: Unrecognized Stranger Trip ---")
     res2 = evaluate_cleon_trip("Motion detected on Backporch Floodlight")
     print("Result:", json.dumps(res2, indent=2))
