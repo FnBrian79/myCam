@@ -161,20 +161,24 @@ class WebhookHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed_url.query)
             file_path = query.get('path', [None])[0]
             if file_path:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
                 if not os.path.isabs(file_path):
-                    base_dir = os.path.dirname(os.path.abspath(__file__))
                     file_path = os.path.normpath(os.path.join(base_dir, file_path))
-                if os.path.exists(file_path):
+                real_file = os.path.realpath(file_path)
+                real_base = os.path.realpath(base_dir)
+                if os.path.commonpath([real_base, real_file]) == real_base and os.path.exists(real_file) and os.path.isfile(real_file):
                     self.send_response(200)
-                    if file_path.lower().endswith('.png') or file_path.lower().endswith('.jpg') or file_path.lower().endswith('.jpeg'):
+                    if real_file.lower().endswith(('.png', '.jpg', '.jpeg')):
                         self.send_header('Content-Type', 'image/jpeg')
-                    elif file_path.lower().endswith('.mp4'):
+                    elif real_file.lower().endswith('.mp4'):
                         self.send_header('Content-Type', 'video/mp4')
+                    elif real_file.lower().endswith('.gif'):
+                        self.send_header('Content-Type', 'image/gif')
                     else:
                         self.send_header('Content-Type', 'application/octet-stream')
                     self.send_header('Accept-Ranges', 'bytes')
                     self.end_headers()
-                    with open(file_path, 'rb') as f:
+                    with open(real_file, 'rb') as f:
                         self.wfile.write(f.read())
                     return
             self.send_response(404)

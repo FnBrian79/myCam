@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from recorder import capture_screenshot, capture_sequence
 from recorder_adb import record_adb_stream, check_adb_connected
 from listener import run_listener_daemon, start_webhook_server
-from storage import load_events, cleanup_old_media
+from storage import load_events, log_event, cleanup_old_media
 
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -74,6 +74,7 @@ def main():
     if args.command == "snapshot":
         filepath = capture_screenshot(config, title=args.title)
         if filepath:
+            log_event(config, "manual_snapshot", args.title, [filepath])
             print(f"SUCCESS: Snapshot created at {filepath}")
         else:
             sys.exit(1)
@@ -92,7 +93,9 @@ def main():
     elif args.command == "trigger":
         print(f"[myCam] Executing simulated trigger: {args.title}")
         if args.mode == "snapshot":
-            capture_screenshot(config, title=args.title)
+            filepath = capture_screenshot(config, title=args.title)
+            if filepath:
+                log_event(config, "simulated_snapshot", args.title, [filepath])
         elif args.mode == "adb":
             record_adb_stream(config, duration_sec=15, title=args.title)
         else:
