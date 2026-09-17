@@ -61,13 +61,17 @@ def grab_screen_gdi():
     return img.convert('RGB')
 
 def grab_screen():
-    """Captures screen using Windows GDI first, falling back to PIL.ImageGrab on Linux/macOS."""
+    """Captures screen using Windows GDI first, falling back to PIL.ImageGrab on Linux/macOS with a headless fallback."""
     if os.name == 'nt':
         try:
             return grab_screen_gdi()
         except Exception:
             pass
-    return ImageGrab.grab()
+    try:
+        return ImageGrab.grab()
+    except Exception:
+        # Fallback for headless environments (e.g. Linux/Docker without active display server)
+        return Image.new('RGB', (1920, 1080), color=(18, 26, 45))
 
 def capture_screenshot(config, title="Manual Trigger"):
     storage_dir = get_storage_dir(config)
