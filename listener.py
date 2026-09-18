@@ -8,7 +8,7 @@ from threading import Thread
 
 from recorder import capture_screenshot, capture_sequence
 from recorder_adb import record_adb_stream, check_adb_connected, resolve_adb_cmd, get_adb_prefix, ensure_device_ready, CREATE_NO_WINDOW
-from storage import log_event, load_events, get_known_identities
+from storage import log_event, load_events, get_known_identities, get_storage_dir
 from dashboard import DASHBOARD_HTML
 from telegram_feed import send_telegram_alert, handle_telegram_callback, start_telegram_polling
 from photos_ingest import run_photo_ingest_pipeline, get_designated_photo_sources
@@ -161,20 +161,31 @@ class WebhookHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed_url.query)
             file_path = query.get('path', [None])[0]
             if file_path:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
                 if not os.path.isabs(file_path):
-                    base_dir = os.path.dirname(os.path.abspath(__file__))
                     file_path = os.path.normpath(os.path.join(base_dir, file_path))
-                if os.path.exists(file_path):
+                real_file = os.path.realpath(file_path)
+                allowed_roots = [os.path.realpath(base_dir)]
+                try:
+                    allowed_roots.append(os.path.realpath(get_storage_dir(self.config)))
+                except Exception:
+                    pass
+                is_allowed = any(
+                    os.path.commonpath([root, real_file]) == root for root in allowed_roots
+                )
+                if is_allowed and os.path.exists(real_file) and os.path.isfile(real_file):
                     self.send_response(200)
-                    if file_path.lower().endswith('.png') or file_path.lower().endswith('.jpg') or file_path.lower().endswith('.jpeg'):
+                    if real_file.lower().endswith(('.png', '.jpg', '.jpeg')):
                         self.send_header('Content-Type', 'image/jpeg')
-                    elif file_path.lower().endswith('.mp4'):
+                    elif real_file.lower().endswith('.mp4'):
                         self.send_header('Content-Type', 'video/mp4')
+                    elif real_file.lower().endswith('.gif'):
+                        self.send_header('Content-Type', 'image/gif')
                     else:
                         self.send_header('Content-Type', 'application/octet-stream')
                     self.send_header('Accept-Ranges', 'bytes')
                     self.end_headers()
-                    with open(file_path, 'rb') as f:
+                    with open(real_file, 'rb') as f:
                         self.wfile.write(f.read())
                     return
             self.send_response(404)

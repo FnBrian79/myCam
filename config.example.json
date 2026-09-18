@@ -18,6 +18,7 @@
   "retention_days": 30,
   "bind_host": "127.0.0.1",
   "webhook_port": 8765,
+  "alexa_bridge_enabled": true,
   "adb_enabled": true,
   "adb_target_device": "",
   "ring_package_name": "com.ringapp",
@@ -27,6 +28,7 @@
     "Driveway Floodlight",
     "Backyard Cam"
   ],
+  "photo_sources": [],
   "encryption_enabled": false,
   "encryption_key": "",
   "telegram": {

@@ -327,6 +327,7 @@ def get_known_identities(config=None):
                 "local_path": r["local_path"],
                 "metadata": json.loads(r["metadata_json"]) if r["metadata_json"] else {},
                 "has_vector": bool(r["vector_768"]),
+                "vector_768": json.loads(r["vector_768"]) if r["vector_768"] else None,
                 "created_at": r["created_at"]
             })
         conn.close()
